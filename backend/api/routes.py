@@ -1,6 +1,6 @@
 """API routes for the interior design agent."""
 from typing import Optional
-from uuid import uuid4
+from uuid import uuid4, uuid5, UUID, NAMESPACE_DNS
 
 from fastapi import APIRouter, HTTPException
 
@@ -19,6 +19,22 @@ from backend.models.schemas import (
 router = APIRouter()
 
 
+def ensure_valid_uuid(id_str: str) -> str:
+    """
+    Convert any string to a valid UUID string.
+    If already a valid UUID, return as-is.
+    Otherwise, generate a deterministic UUID v5 from the string.
+    """
+    try:
+        # Try to parse as UUID
+        UUID(id_str)
+        return id_str
+    except (ValueError, AttributeError):
+        # Not a valid UUID, generate one deterministically
+        # Use UUID v5 with DNS namespace for consistency
+        return str(uuid5(NAMESPACE_DNS, id_str))
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """
@@ -27,16 +43,19 @@ async def chat(request: ChatRequest):
     Stores conversation history and generates design responses.
     """
     try:
+        # Convert user_id to valid UUID format
+        user_id = ensure_valid_uuid(request.user_id)
+
         # Ensure user exists
-        user = storage.get_user(request.user_id)
+        user = storage.get_user(user_id)
         if not user:
-            user = User(id=request.user_id)
+            user = User(id=user_id)
             storage.create_user(user)
 
         # Process message with agent
         response_text, room_id, version_id, images = await design_agent.chat(
             user_message=request.message,
-            user_id=request.user_id,
+            user_id=user_id,
             session_id=request.session_id,
             room_id=request.room_id,
         )
@@ -59,6 +78,8 @@ async def chat(request: ChatRequest):
 async def get_user_rooms(user_id: str):
     """Get all rooms for a user."""
     try:
+        # Convert user_id to valid UUID format
+        user_id = ensure_valid_uuid(user_id)
         rooms = storage.get_user_rooms(user_id)
         return RoomListResponse(rooms=rooms)
     except Exception as e:
@@ -90,6 +111,8 @@ async def select_design(
 ):
     """Mark a design version as selected."""
     try:
+        # Convert user_id to valid UUID format
+        user_id = ensure_valid_uuid(user_id)
         await design_agent.select_design(user_id, version_id, image_id)
         return {"status": "success", "message": "Design selected"}
     except Exception as e:
@@ -109,6 +132,9 @@ async def reject_design(
     This decreases confidence in preferences found in the design.
     """
     try:
+        # Convert user_id to valid UUID format
+        user_id = ensure_valid_uuid(user_id)
+
         # Get the rejected design
         version = storage.get_design_version(version_id)
         if not version:
@@ -150,6 +176,9 @@ async def submit_feedback(
     - "Too modern for me" (is_positive=False)
     """
     try:
+        # Convert user_id to valid UUID format
+        user_id = ensure_valid_uuid(user_id)
+
         memory_manager.learn_from_feedback(
             user_id=user_id,
             feedback=feedback_text,
@@ -170,6 +199,8 @@ async def submit_feedback(
 async def get_user_preferences(user_id: str):
     """Get learned preferences for a user."""
     try:
+        # Convert user_id to valid UUID format
+        user_id = ensure_valid_uuid(user_id)
         preferences = storage.get_user_preferences(user_id)
         return PreferenceListResponse(preferences=preferences)
     except Exception as e:

@@ -361,7 +361,7 @@ OUTPUT (one line only):"""
 
         # Mark as selected
         version.selected = True
-        self.storage.create_design_version(version)  # Update
+        self.storage.update_design_version(version)
 
         # Mark image as selected if specified
         if image_id:
@@ -369,7 +369,7 @@ OUTPUT (one line only):"""
             for img in images:
                 if img.id == image_id:
                     img.selected = True
-                    self.storage.create_design_image(img)
+                    self.storage.update_design_image(img)
 
         # Learn preferences from selection
         self.memory.learn_from_design_selection(

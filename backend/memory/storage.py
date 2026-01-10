@@ -1,7 +1,9 @@
-"""JSON/SQLite storage for structured data that doesn't need vector search."""
-import json
-from pathlib import Path
-from typing import Dict, List, Optional
+"""Supabase PostgreSQL storage for structured data."""
+from datetime import datetime
+from typing import List, Optional
+
+from supabase import create_client
+from postgrest.exceptions import APIError
 
 from backend.config import config
 from backend.models.schemas import (
@@ -13,113 +15,153 @@ from backend.models.schemas import (
 )
 
 
-class DataStorage:
-    """Simple JSON-based storage for structured data."""
+class SupabaseDataStorage:
+    """Supabase PostgreSQL-based storage for structured data."""
 
-    def __init__(self, storage_path: Path = None):
-        self.storage_path = storage_path or config.DATA_STORAGE_PATH
-        self.storage_path.mkdir(parents=True, exist_ok=True)
+    def __init__(self):
+        """Initialize Supabase client."""
+        if not config.SUPABASE_URL or not config.SUPABASE_KEY:
+            raise ValueError(
+                "SUPABASE_URL and SUPABASE_KEY are required for Supabase storage"
+            )
 
-        # Initialize storage files
-        self.users_file = self.storage_path / "users.json"
-        self.rooms_file = self.storage_path / "rooms.json"
-        self.design_versions_file = self.storage_path / "design_versions.json"
-        self.design_images_file = self.storage_path / "design_images.json"
-        self.preferences_file = self.storage_path / "preferences.json"
+        self.client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
 
-        # Initialize empty files if they don't exist
-        for file in [
-            self.users_file,
-            self.rooms_file,
-            self.design_versions_file,
-            self.design_images_file,
-            self.preferences_file,
-        ]:
-            if not file.exists():
-                file.write_text("{}")
+    def _serialize_model(self, model) -> dict:
+        """Convert Pydantic model to dict suitable for Supabase."""
+        data = model.model_dump()
+        # Convert datetime objects to ISO format strings
+        for key, value in data.items():
+            if isinstance(value, datetime):
+                data[key] = value.isoformat()
+        return data
 
-    def _load_json(self, file_path: Path) -> Dict:
-        """Load JSON from file."""
-        try:
-            return json.loads(file_path.read_text())
-        except (json.JSONDecodeError, FileNotFoundError):
-            return {}
+    # ==================== User operations ====================
 
-    def _save_json(self, file_path: Path, data: Dict) -> None:
-        """Save JSON to file."""
-        file_path.write_text(json.dumps(data, indent=2, default=str))
-
-    # User operations
     def create_user(self, user: User) -> User:
         """Create a new user."""
-        users = self._load_json(self.users_file)
-        users[user.id] = user.model_dump()
-        self._save_json(self.users_file, users)
-        return user
+        try:
+            data = self._serialize_model(user)
+            result = self.client.table('users').insert(data).execute()
+            return User(**result.data[0])
+        except APIError as e:
+            print(f"Error creating user: {e}")
+            raise
 
     def get_user(self, user_id: str) -> Optional[User]:
         """Get user by ID."""
-        users = self._load_json(self.users_file)
-        user_data = users.get(user_id)
-        return User(**user_data) if user_data else None
+        try:
+            result = (
+                self.client.table('users')
+                .select('*')
+                .eq('id', user_id)
+                .execute()
+            )
+            return User(**result.data[0]) if result.data else None
+        except APIError as e:
+            print(f"Error getting user: {e}")
+            return None
 
-    # Room operations
+    # ==================== Room operations ====================
+
     def create_room(self, room: Room) -> Room:
         """Create a new room."""
-        rooms = self._load_json(self.rooms_file)
-        rooms[room.id] = room.model_dump()
-        self._save_json(self.rooms_file, rooms)
-        return room
+        try:
+            data = self._serialize_model(room)
+            result = self.client.table('rooms').insert(data).execute()
+            return Room(**result.data[0])
+        except APIError as e:
+            print(f"Error creating room: {e}")
+            raise
 
     def get_room(self, room_id: str) -> Optional[Room]:
         """Get room by ID."""
-        rooms = self._load_json(self.rooms_file)
-        room_data = rooms.get(room_id)
-        return Room(**room_data) if room_data else None
+        try:
+            result = (
+                self.client.table('rooms')
+                .select('*')
+                .eq('id', room_id)
+                .execute()
+            )
+            return Room(**result.data[0]) if result.data else None
+        except APIError as e:
+            print(f"Error getting room: {e}")
+            return None
 
     def get_user_rooms(self, user_id: str) -> List[Room]:
-        """Get all rooms for a user."""
-        rooms = self._load_json(self.rooms_file)
-        user_rooms = [
-            Room(**room_data)
-            for room_data in rooms.values()
-            if room_data.get("user_id") == user_id
-        ]
-        return sorted(user_rooms, key=lambda r: r.created_at, reverse=True)
+        """Get all rooms for a user, sorted by created_at DESC."""
+        try:
+            result = (
+                self.client.table('rooms')
+                .select('*')
+                .eq('user_id', user_id)
+                .order('created_at', desc=True)
+                .execute()
+            )
+            return [Room(**row) for row in result.data]
+        except APIError as e:
+            print(f"Error getting user rooms: {e}")
+            return []
 
     def update_room(self, room: Room) -> Room:
         """Update an existing room."""
-        rooms = self._load_json(self.rooms_file)
-        if room.id in rooms:
-            from datetime import datetime
+        try:
+            # Update the updated_at timestamp
             room.updated_at = datetime.utcnow()
-            rooms[room.id] = room.model_dump()
-            self._save_json(self.rooms_file, rooms)
-        return room
+            data = self._serialize_model(room)
 
-    # Design version operations
+            result = (
+                self.client.table('rooms')
+                .update(data)
+                .eq('id', room.id)
+                .execute()
+            )
+
+            return Room(**result.data[0]) if result.data else room
+        except APIError as e:
+            print(f"Error updating room: {e}")
+            return room
+
+    # ==================== Design version operations ====================
+
     def create_design_version(self, version: DesignVersion) -> DesignVersion:
         """Create a new design version."""
-        versions = self._load_json(self.design_versions_file)
-        versions[version.id] = version.model_dump()
-        self._save_json(self.design_versions_file, versions)
-        return version
+        try:
+            data = self._serialize_model(version)
+            result = self.client.table('design_versions').insert(data).execute()
+            return DesignVersion(**result.data[0])
+        except APIError as e:
+            print(f"Error creating design version: {e}")
+            raise
 
     def get_design_version(self, version_id: str) -> Optional[DesignVersion]:
         """Get design version by ID."""
-        versions = self._load_json(self.design_versions_file)
-        version_data = versions.get(version_id)
-        return DesignVersion(**version_data) if version_data else None
+        try:
+            result = (
+                self.client.table('design_versions')
+                .select('*')
+                .eq('id', version_id)
+                .execute()
+            )
+            return DesignVersion(**result.data[0]) if result.data else None
+        except APIError as e:
+            print(f"Error getting design version: {e}")
+            return None
 
     def get_room_design_versions(self, room_id: str) -> List[DesignVersion]:
-        """Get all design versions for a room."""
-        versions = self._load_json(self.design_versions_file)
-        room_versions = [
-            DesignVersion(**version_data)
-            for version_data in versions.values()
-            if version_data.get("room_id") == room_id
-        ]
-        return sorted(room_versions, key=lambda v: v.version_number)
+        """Get all design versions for a room, sorted by version_number ASC."""
+        try:
+            result = (
+                self.client.table('design_versions')
+                .select('*')
+                .eq('room_id', room_id)
+                .order('version_number', desc=False)
+                .execute()
+            )
+            return [DesignVersion(**row) for row in result.data]
+        except APIError as e:
+            print(f"Error getting room design versions: {e}")
+            return []
 
     def get_latest_design_version(self, room_id: str) -> Optional[DesignVersion]:
         """Get the latest design version for a room."""
@@ -128,76 +170,135 @@ class DataStorage:
 
     def update_design_version(self, version: DesignVersion) -> DesignVersion:
         """Update an existing design version."""
-        versions = self._load_json(self.design_versions_file)
-        if version.id not in versions:
-            raise ValueError(f"Design version {version.id} not found")
-        versions[version.id] = version.model_dump()
-        self._save_json(self.design_versions_file, versions)
-        return version
+        try:
+            data = self._serialize_model(version)
+            result = (
+                self.client.table('design_versions')
+                .update(data)
+                .eq('id', version.id)
+                .execute()
+            )
 
-    # Design image operations
+            if not result.data:
+                raise ValueError(f"Design version {version.id} not found")
+
+            return DesignVersion(**result.data[0])
+        except APIError as e:
+            print(f"Error updating design version: {e}")
+            raise
+
+    # ==================== Design image operations ====================
+
     def create_design_image(self, image: DesignImage) -> DesignImage:
         """Create a new design image."""
-        images = self._load_json(self.design_images_file)
-        images[image.id] = image.model_dump()
-        self._save_json(self.design_images_file, images)
-        return image
+        try:
+            data = self._serialize_model(image)
+            result = self.client.table('design_images').insert(data).execute()
+            return DesignImage(**result.data[0])
+        except APIError as e:
+            print(f"Error creating design image: {e}")
+            raise
 
     def get_design_images(self, version_id: str) -> List[DesignImage]:
-        """Get all images for a design version."""
-        images = self._load_json(self.design_images_file)
-        version_images = [
-            DesignImage(**image_data)
-            for image_data in images.values()
-            if image_data.get("design_version_id") == version_id
-        ]
-        return sorted(version_images, key=lambda i: i.created_at)
+        """Get all images for a design version, sorted by created_at ASC."""
+        try:
+            result = (
+                self.client.table('design_images')
+                .select('*')
+                .eq('design_version_id', version_id)
+                .order('created_at', desc=False)
+                .execute()
+            )
+            return [DesignImage(**row) for row in result.data]
+        except APIError as e:
+            print(f"Error getting design images: {e}")
+            return []
 
-    # Preference operations
+    def update_design_image(self, image: DesignImage) -> DesignImage:
+        """Update an existing design image."""
+        try:
+            data = self._serialize_model(image)
+
+            result = (
+                self.client.table('design_images')
+                .update(data)
+                .eq('id', image.id)
+                .execute()
+            )
+
+            return DesignImage(**result.data[0]) if result.data else image
+        except APIError as e:
+            print(f"Error updating design image: {e}")
+            return image
+
+    # ==================== Preference operations ====================
+
     def create_preference(self, preference: UserPreference) -> UserPreference:
         """Create a new user preference."""
-        preferences = self._load_json(self.preferences_file)
-        preferences[preference.id] = preference.model_dump()
-        self._save_json(self.preferences_file, preferences)
-        return preference
+        try:
+            data = self._serialize_model(preference)
+            result = self.client.table('user_preferences').insert(data).execute()
+            return UserPreference(**result.data[0])
+        except APIError as e:
+            print(f"Error creating preference: {e}")
+            raise
 
     def update_preference(self, preference: UserPreference) -> UserPreference:
         """Update an existing preference."""
-        preferences = self._load_json(self.preferences_file)
-        if preference.id in preferences:
-            from datetime import datetime
+        try:
+            # Update the updated_at timestamp
             preference.updated_at = datetime.utcnow()
-            preferences[preference.id] = preference.model_dump()
-            self._save_json(self.preferences_file, preferences)
-        return preference
+            data = self._serialize_model(preference)
+
+            result = (
+                self.client.table('user_preferences')
+                .update(data)
+                .eq('id', preference.id)
+                .execute()
+            )
+
+            return UserPreference(**result.data[0]) if result.data else preference
+        except APIError as e:
+            print(f"Error updating preference: {e}")
+            return preference
 
     def get_user_preferences(
         self, user_id: str, confidence_threshold: float = 0.0
     ) -> List[UserPreference]:
-        """Get all preferences for a user above confidence threshold."""
-        preferences = self._load_json(self.preferences_file)
-        user_prefs = [
-            UserPreference(**pref_data)
-            for pref_data in preferences.values()
-            if pref_data.get("user_id") == user_id
-            and pref_data.get("confidence", 0.0) >= confidence_threshold
-        ]
-        return sorted(user_prefs, key=lambda p: p.confidence, reverse=True)
+        """Get all preferences for a user above confidence threshold, sorted by confidence DESC."""
+        try:
+            result = (
+                self.client.table('user_preferences')
+                .select('*')
+                .eq('user_id', user_id)
+                .gte('confidence', confidence_threshold)
+                .order('confidence', desc=True)
+                .execute()
+            )
+            return [UserPreference(**row) for row in result.data]
+        except APIError as e:
+            print(f"Error getting user preferences: {e}")
+            return []
 
     def find_preference(
         self, user_id: str, preference_type: str, preference_value: str
     ) -> Optional[UserPreference]:
         """Find a specific preference."""
-        preferences = self._load_json(self.preferences_file)
-        for pref_data in preferences.values():
-            if (
-                pref_data.get("user_id") == user_id
-                and pref_data.get("preference_type") == preference_type
-                and pref_data.get("preference_value") == preference_value
-            ):
-                return UserPreference(**pref_data)
-        return None
+        try:
+            result = (
+                self.client.table('user_preferences')
+                .select('*')
+                .eq('user_id', user_id)
+                .eq('preference_type', preference_type)
+                .eq('preference_value', preference_value)
+                .limit(1)
+                .execute()
+            )
+            return UserPreference(**result.data[0]) if result.data else None
+        except APIError as e:
+            print(f"Error finding preference: {e}")
+            return None
 
 
 # Global storage instance
-storage = DataStorage()
+storage = SupabaseDataStorage()
