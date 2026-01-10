@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from backend.agent.design_agent import design_agent
 from backend.memory.storage import storage
+from backend.memory.manager import memory_manager
 from backend.models.schemas import (
     ChatRequest,
     ChatResponse,
@@ -33,7 +34,7 @@ async def chat(request: ChatRequest):
             storage.create_user(user)
 
         # Process message with agent
-        response_text, room_id, images = await design_agent.chat(
+        response_text, room_id, version_id, images = await design_agent.chat(
             user_message=request.message,
             user_id=request.user_id,
             session_id=request.session_id,
@@ -41,10 +42,16 @@ async def chat(request: ChatRequest):
         )
 
         return ChatResponse(
-            message=response_text, room_id=room_id, images=images
+            message=response_text,
+            room_id=room_id,
+            design_version_id=version_id,
+            images=images
         )
 
     except Exception as e:
+        import traceback
+        print(f"ERROR in /chat endpoint: {e}")
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -85,6 +92,76 @@ async def select_design(
     try:
         await design_agent.select_design(user_id, version_id, image_id)
         return {"status": "success", "message": "Design selected"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/rooms/{room_id}/designs/{version_id}/reject")
+async def reject_design(
+    room_id: str,
+    version_id: str,
+    user_id: str,
+    feedback: str = "I don't like this design"
+):
+    """
+    Mark a design version as rejected and learn from it.
+
+    This decreases confidence in preferences found in the design.
+    """
+    try:
+        # Get the rejected design
+        version = storage.get_design_version(version_id)
+        if not version:
+            raise HTTPException(status_code=404, detail="Design not found")
+
+        # Mark as rejected
+        version.rejected = True
+        storage.update_design_version(version)
+
+        # Learn from rejection (negative feedback)
+        memory_manager.learn_from_feedback(
+            user_id=user_id,
+            feedback=version.description + " " + feedback,
+            is_positive=False,  # This is a rejection
+            room_id=room_id
+        )
+
+        return {
+            "status": "success",
+            "message": "Rejection recorded, preferences updated"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/feedback")
+async def submit_feedback(
+    user_id: str,
+    feedback_text: str,
+    is_positive: bool,
+    room_id: Optional[str] = None
+):
+    """
+    Submit explicit feedback to improve preference learning.
+
+    Examples:
+    - "I love warm colors" (is_positive=True)
+    - "Too modern for me" (is_positive=False)
+    """
+    try:
+        memory_manager.learn_from_feedback(
+            user_id=user_id,
+            feedback=feedback_text,
+            is_positive=is_positive,
+            room_id=room_id
+        )
+
+        return {
+            "status": "success",
+            "message": "Feedback recorded"
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

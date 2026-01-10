@@ -2,7 +2,7 @@
 import re
 from typing import List, Optional, Tuple
 
-from llama_index.llms.anthropic import Anthropic
+import anthropic
 
 from backend.agent.image_generator import image_generator
 from backend.agent.prompts import DESIGN_GENERATION_PROMPT, SYSTEM_PROMPT
@@ -25,12 +25,8 @@ class DesignAgent:
         self.storage = storage
         self.image_gen = image_generator
 
-        # Initialize Claude LLM
-        self.llm = Anthropic(
-            api_key=config.ANTHROPIC_API_KEY,
-            model=config.CLAUDE_MODEL,
-            max_tokens=config.CLAUDE_MAX_TOKENS,
-        )
+        # Initialize Claude client
+        self.client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
     async def chat(
         self,
@@ -38,7 +34,7 @@ class DesignAgent:
         user_id: str,
         session_id: str,
         room_id: Optional[str] = None,
-    ) -> Tuple[str, Optional[str], List[str]]:
+    ) -> Tuple[str, Optional[str], Optional[str], List[dict]]:
         """
         Process user message and generate response.
 
@@ -49,7 +45,7 @@ class DesignAgent:
             room_id: Optional current room ID
 
         Returns:
-            Tuple of (response_text, room_id, image_urls)
+            Tuple of (response_text, room_id, version_id, image_data)
         """
         # Store user message
         self.memory.store_conversation(
@@ -60,8 +56,8 @@ class DesignAgent:
             room_id=room_id,
         )
 
-        # Detect if user is referencing an existing room
-        room_id, room_name = await self._detect_room_reference(
+        # Detect if user is referencing an existing room or creating a new one
+        room_id, room_name, target_room_type = await self._detect_room_reference(
             user_message, user_id, room_id
         )
 
@@ -73,8 +69,13 @@ class DesignAgent:
             user_message=user_message, context=context or "No previous context."
         )
 
-        response = await self.llm.acomplete(prompt, formatted=False)
-        response_text = str(response)
+        # Call Claude API
+        message = self.client.messages.create(
+            model=config.CLAUDE_MODEL,
+            max_tokens=config.CLAUDE_MAX_TOKENS,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        response_text = message.content[0].text
 
         # Store agent response
         self.memory.store_conversation(
@@ -87,73 +88,167 @@ class DesignAgent:
 
         # Determine if this is a design generation response
         images = []
-        if self._is_design_response(response_text):
-            # Create/update room if needed
-            if not room_id:
+        version_id = None
+        is_design = self._is_design_response(response_text)
+        print(f"DEBUG: Is design response? {is_design}")
+        if is_design:
+            # Create room if this is a new room request (target_room_type was identified)
+            if not room_id and target_room_type:
                 room_id = await self._create_room_from_context(
-                    user_message, user_id, session_id
+                    user_id, target_room_type
                 )
+            print(f"DEBUG: Room ID: {room_id}")
 
             # Generate design version and images
             if room_id:
-                images = await self._generate_design_version(
+                version_id, images = await self._generate_design_version(
                     room_id, response_text, user_id
                 )
+                print(f"DEBUG: Generated version {version_id} with {len(images)} images")
 
-        return response_text, room_id, images
+        return response_text, room_id, version_id, images
 
     async def _detect_room_reference(
         self, user_message: str, user_id: str, current_room_id: Optional[str]
-    ) -> Tuple[Optional[str], Optional[str]]:
-        """Detect if user is referencing an existing room."""
-        if current_room_id:
-            return current_room_id, None
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Detect if user is referencing an existing room using Claude classifier.
+
+        Returns: (room_id, room_name, target_room_type)
+        - If existing room: (room_id, room_name, None)
+        - If new room: (None, None, room_type)
+        """
+        # Don't assume current room is correct - always classify to detect if user wants a different room
+        # e.g., "design a bedroom" while in Living Room context should create a new Bedroom
 
         # Get user's rooms
         rooms = self.storage.get_user_rooms(user_id)
+
+        # If no existing rooms, still classify to identify room type for new users
         if not rooms:
-            return None, None
+            rooms_list = "(No existing rooms - this will be your first room)"
+        else:
+            rooms_list = "\n".join([f"- {room.name} ({room.room_type.value})" for room in rooms])
 
-        # Simple keyword matching for room references
-        message_lower = user_message.lower()
-        for room in rooms:
-            if room.name.lower() in message_lower:
-                return room.id, room.name
+        # Add current room context if available
+        current_room_context = ""
+        if current_room_id:
+            current_room = self.storage.get_room(current_room_id)
+            if current_room:
+                current_room_context = f"\nCurrent active room: {current_room.name} ({current_room.room_type.value})"
 
-            # Check room type
-            if room.room_type.value in message_lower:
-                return room.id, room.name
+        classifier_prompt = f"""You are a room classification assistant. Your ONLY job is to output one line.
 
-        return None, None
+User's existing rooms:
+{rooms_list}{current_room_context}
+
+User message: "{user_message}"
+
+INSTRUCTIONS:
+1. Identify the TARGET room (the room they want to design/work on)
+2. Ignore REFERENCE rooms (rooms mentioned for inspiration like "same as bedroom")
+3. Determine if they want to create a NEW room or modify an EXISTING one
+
+OUTPUT ONLY ONE OF THESE FORMATS (nothing else):
+- NEW bedroom
+- NEW living_room
+- NEW dining_room
+- NEW kitchen
+- NEW bathroom
+- NEW office
+- EXISTING [room name from list above]
+
+Examples:
+"design a living room like my bedroom" -> NEW living_room
+"make the bedroom nicer" -> EXISTING Bedroom
+"show me images" -> [skip classification, return nothing]
+
+OUTPUT (one line only):"""
+
+        try:
+            response = self.client.messages.create(
+                model="claude-3-haiku-20240307",  # Use fast Haiku for classification
+                max_tokens=20,  # Reduced to force concise answers
+                temperature=0,  # Deterministic output
+                messages=[{"role": "user", "content": classifier_prompt}]
+            )
+            classification = response.content[0].text.strip().upper()
+            print(f"DEBUG: Room classification (raw): {classification}")
+
+            # Parse the classification, being tolerant of verbose responses
+            if "EXISTING" in classification:
+                # Only try to match existing rooms if user has rooms
+                if rooms:
+                    # Extract room name from classification
+                    for room in rooms:
+                        if room.name.upper() in classification or room.room_type.value.upper() in classification:
+                            print(f"DEBUG: Matched existing room: {room.name}")
+                            return room.id, room.name, None
+                    # Fallback: check message for room names
+                    message_lower = user_message.lower()
+                    for room in rooms:
+                        if room.name.lower() in message_lower or room.room_type.value in message_lower:
+                            print(f"DEBUG: Fallback matched existing room: {room.name}")
+                            return room.id, room.name, None
+                # No rooms to match or no match found
+                print(f"DEBUG: EXISTING mentioned but no room match, returning None")
+                return None, None, None
+
+            elif "NEW" in classification:
+                # Extract room type from classification - be tolerant of format
+                # Look for room type keywords in the classification
+                room_type_keywords = {
+                    "LIVING": "living_room",
+                    "LIVING_ROOM": "living_room",
+                    "BEDROOM": "bedroom",
+                    "DINING": "dining_room",
+                    "DINING_ROOM": "dining_room",
+                    "KITCHEN": "kitchen",
+                    "BATHROOM": "bathroom",
+                    "OFFICE": "office",
+                }
+
+                for keyword, room_type in room_type_keywords.items():
+                    if keyword in classification:
+                        print(f"DEBUG: Extracted room type: {room_type}")
+                        return None, None, room_type
+
+                # Default to "other" if we can't identify the room type
+                print(f"DEBUG: Could not identify room type, defaulting to 'other'")
+                return None, None, "other"
+
+            # Classification doesn't contain NEW or EXISTING - unclear intent
+            print(f"DEBUG: Classification unclear, returning None")
+            return None, None, None
+
+        except Exception as e:
+            print(f"DEBUG: Classifier error: {e}, falling back to None")
+            return None, None, None
 
     async def _create_room_from_context(
-        self, user_message: str, user_id: str, session_id: str
+        self, user_id: str, room_type_str: str
     ) -> Optional[str]:
-        """Create a new room based on conversation context."""
-        # Extract room type from message
-        message_lower = user_message.lower()
+        """Create a new room based on identified room type.
 
-        room_type = RoomType.OTHER
-        room_name = "New Room"
+        Args:
+            user_id: User ID
+            room_type_str: Room type string from classifier (e.g., "living_room", "bedroom")
 
-        if "bedroom" in message_lower:
-            room_type = RoomType.BEDROOM
-            room_name = "Bedroom"
-        elif "living room" in message_lower:
-            room_type = RoomType.LIVING_ROOM
-            room_name = "Living Room"
-        elif "kitchen" in message_lower:
-            room_type = RoomType.KITCHEN
-            room_name = "Kitchen"
-        elif "bathroom" in message_lower:
-            room_type = RoomType.BATHROOM
-            room_name = "Bathroom"
-        elif "office" in message_lower:
-            room_type = RoomType.OFFICE
-            room_name = "Home Office"
-        elif "dining" in message_lower:
-            room_type = RoomType.DINING_ROOM
-            room_name = "Dining Room"
+        Returns:
+            Room ID of created room
+        """
+        # Map room type string to RoomType enum and display name
+        room_type_map = {
+            "bedroom": (RoomType.BEDROOM, "Bedroom"),
+            "living_room": (RoomType.LIVING_ROOM, "Living Room"),
+            "dining_room": (RoomType.DINING_ROOM, "Dining Room"),
+            "kitchen": (RoomType.KITCHEN, "Kitchen"),
+            "bathroom": (RoomType.BATHROOM, "Bathroom"),
+            "office": (RoomType.OFFICE, "Home Office"),
+            "other": (RoomType.OTHER, "New Room"),
+        }
+
+        room_type, room_name = room_type_map.get(room_type_str, (RoomType.OTHER, "New Room"))
+        print(f"DEBUG: Creating room: type={room_type.value}, name={room_name}")
 
         # Create room
         room = Room(user_id=user_id, name=room_name, room_type=room_type)
@@ -162,27 +257,60 @@ class DesignAgent:
         return room.id
 
     def _is_design_response(self, response: str) -> bool:
-        """Check if response contains a design description."""
-        # Simple heuristic: check for design-related keywords
-        design_indicators = [
-            "furniture",
-            "color",
-            "wall",
-            "floor",
-            "lighting",
-            "layout",
-            "design",
-            "style",
-        ]
+        """Check if response contains an actual design description."""
         response_lower = response.lower()
-        return (
-            sum(1 for indicator in design_indicators if indicator in response_lower)
-            >= 3
-        )
+
+        # Check for design option indicators (Option 1, Option 2, etc.)
+        has_options = bool(re.search(r'option\s+\d|design\s+\d|concept\s+\d', response_lower))
+
+        # Check for structured design sections
+        design_sections = [
+            "color palette",
+            "layout & furniture",
+            "materials & textures",
+            "furniture:",
+            "lighting:",
+            "color scheme",
+            "materials:",
+            "textures:",
+            "seating & layout",
+            "seating area"
+        ]
+        has_sections = any(section in response_lower for section in design_sections)
+        print(f"DEBUG: has_options={has_options}, has_sections={has_sections}")
+
+        # Check for comprehensive design keywords (need multiple)
+        design_keywords = [
+            "furniture",
+            "palette",
+            "materials",
+            "lighting",
+            "textures",
+            "layout",
+            "upholstered",
+            "nightstand",
+            "dresser",
+            "rug",
+            "curtain",
+            "sofa",
+            "sectional",
+            "armchair",
+            "coffee table",
+            "shelves",
+            "pendant",
+            "cushion"
+        ]
+        keyword_count = sum(1 for keyword in design_keywords if keyword in response_lower)
+        print(f"DEBUG: keyword_count={keyword_count}")
+
+        # It's a design if: has options OR (has sections AND multiple keywords)
+        is_design = has_options or (has_sections and keyword_count >= 4)
+        print(f"DEBUG: Final is_design={is_design} (has_options={has_options} OR (has_sections={has_sections} AND keyword_count={keyword_count}>=4))")
+        return is_design
 
     async def _generate_design_version(
         self, room_id: str, design_description: str, user_id: str
-    ) -> List[str]:
+    ) -> Tuple[str, List[dict]]:
         """Generate a design version with images."""
         # Get existing versions
         versions = self.storage.get_room_design_versions(room_id)
@@ -202,7 +330,7 @@ class DesignAgent:
 
         # Generate images (3-5 variations)
         num_images = 3
-        image_urls = []
+        image_data = []
 
         for i in range(num_images):
             # Create variation prompt
@@ -217,10 +345,10 @@ class DesignAgent:
                 image_url=image_url,
                 prompt=variation_prompt,
             )
-            self.storage.create_design_image(design_image)
-            image_urls.append(image_url)
+            created_image = self.storage.create_design_image(design_image)
+            image_data.append({"id": created_image.id, "url": image_url})
 
-        return image_urls
+        return design_version.id, image_data
 
     async def select_design(
         self, user_id: str, design_version_id: str, image_id: Optional[str] = None

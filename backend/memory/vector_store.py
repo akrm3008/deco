@@ -3,6 +3,7 @@ import chromadb
 from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.embeddings.voyageai import VoyageEmbedding
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
 
 from backend.config import config
@@ -23,6 +24,11 @@ def get_embedding_model():
         return OpenAIEmbedding(
             model=config.EMBEDDING_MODEL,
             api_key=config.OPENAI_API_KEY,
+        )
+    elif config.EMBEDDING_PROVIDER == "huggingface":
+        # Local HuggingFace embeddings - no API key needed
+        return HuggingFaceEmbedding(
+            model_name=config.EMBEDDING_MODEL,
         )
     else:
         raise ValueError(f"Unknown embedding provider: {config.EMBEDDING_PROVIDER}")

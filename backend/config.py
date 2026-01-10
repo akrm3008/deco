@@ -15,11 +15,11 @@ class Config:
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 
     # Embedding configuration
-    EMBEDDING_PROVIDER: Literal["voyage", "openai"] = os.getenv("EMBEDDING_PROVIDER", "voyage")
+    EMBEDDING_PROVIDER: Literal["voyage", "openai", "huggingface"] = os.getenv("EMBEDDING_PROVIDER", "huggingface")
     VOYAGE_API_KEY: str = os.getenv("VOYAGE_API_KEY", "")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "voyage-3")
-    EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+    EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "384"))
 
     # Image generation
     IMAGE_GENERATOR: Literal["gpt-image-1.5", "banana-pro", "placeholder"] = os.getenv(
@@ -57,6 +57,8 @@ class Config:
 
         if cls.EMBEDDING_PROVIDER == "openai" and not cls.OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY is required when using OpenAI embeddings")
+
+        # HuggingFace embeddings don't require API keys - they run locally
 
         # Create directories if they don't exist
         cls.CHROMA_DB_PATH.mkdir(parents=True, exist_ok=True)

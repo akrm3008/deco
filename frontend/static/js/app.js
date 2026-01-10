@@ -61,17 +61,27 @@ function initializeChatForm() {
 
             const data = await response.json();
 
+            // Debug logging
+            console.log('Chat response:', data);
+            console.log('Images:', data.images);
+            console.log('Version ID:', data.design_version_id);
+            console.log('Room ID:', data.room_id);
+
+            // Update current room BEFORE adding message to chat
+            if (data.room_id && data.room_id !== currentRoomId) {
+                currentRoomId = data.room_id;
+            }
+
             // Remove loading message
             loadingMsg.remove();
 
-            // Add agent response
-            addMessageToChat(data.message, 'agent', data.images);
+            // Add agent response (now with correct currentRoomId)
+            addMessageToChat(data.message, 'agent', data.images, data.design_version_id, data.room_id);
 
-            // Update current room
-            if (data.room_id && data.room_id !== currentRoomId) {
-                currentRoomId = data.room_id;
+            // Reload rooms and design history
+            if (data.room_id) {
                 await loadUserRooms();
-                await loadDesignHistory(currentRoomId);
+                await loadDesignHistory(data.room_id);
             }
 
             // Reload preferences (they may have been learned)
@@ -86,7 +96,9 @@ function initializeChatForm() {
 }
 
 // Add message to chat
-function addMessageToChat(message, role, images = []) {
+function addMessageToChat(message, role, images = [], versionId = null, roomId = null) {
+    console.log('addMessageToChat called with:', { role, imagesLength: images?.length, versionId, roomId });
+
     const chatMessages = document.getElementById('chat-messages');
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}-message`;
@@ -95,18 +107,32 @@ function addMessageToChat(message, role, images = []) {
 
     if (role === 'user') {
         content += `<strong>You:</strong> ${escapeHtml(message)}`;
+    } else if (role === 'system') {
+        content += escapeHtml(message);
     } else {
-        content += `<strong>Designer:</strong> ${escapeHtml(message)}`;
+        // Render markdown for agent messages
+        const renderedMarkdown = marked.parse(message);
+        content += `<strong>Designer:</strong><div class="markdown-content">${renderedMarkdown}</div>`;
     }
 
     content += `</div>`;
 
-    // Add images if present
-    if (images && images.length > 0) {
+    // Add images if present with Select/Reject buttons
+    if (images && images.length > 0 && versionId && roomId) {
         content += `<div class="design-images">`;
-        images.forEach(imageUrl => {
-            content += `<div class="design-image">
-                <img src="${imageUrl}" alt="Design visualization" />
+        images.forEach(imageData => {
+            content += `<div class="design-image-container">
+                <div class="design-image">
+                    <img src="${imageData.url}" alt="Design visualization" />
+                </div>
+                <div class="image-actions">
+                    <button class="btn-select" onclick="selectImage('${roomId}', '${versionId}', '${imageData.id}')">
+                        👍 Select This Design
+                    </button>
+                    <button class="btn-reject" onclick="rejectDesign('${roomId}', '${versionId}')">
+                        👎 Reject All
+                    </button>
+                </div>
             </div>`;
         });
         content += `</div>`;
@@ -181,14 +207,35 @@ async function loadDesignHistory(roomId) {
             return;
         }
 
-        historyDiv.innerHTML = data.versions.map(version => `
-            <div class="design-item">
-                <div><strong>Version ${version.version_number}</strong> ${version.selected ? '✓' : ''}</div>
-                <div style="font-size: 12px; opacity: 0.7; margin-top: 5px;">
-                    ${version.description.substring(0, 100)}...
+        historyDiv.innerHTML = data.versions.map(version => {
+            const images = data.images[version.id] || [];
+            const hasImages = images.length > 0;
+
+            return `
+                <div class="design-version-card ${version.selected ? 'selected' : ''} ${version.rejected ? 'rejected' : ''}">
+                    <div class="version-header">
+                        <strong>Version ${version.version_number}</strong>
+                        ${version.selected ? '<span class="status-badge selected-badge">✓ Selected</span>' : ''}
+                        ${version.rejected ? '<span class="status-badge rejected-badge">✗ Rejected</span>' : ''}
+                    </div>
+
+                    <div class="version-description">
+                        ${version.description.substring(0, 120)}${version.description.length > 120 ? '...' : ''}
+                    </div>
+
+                    ${hasImages ? `
+                        <div class="version-images">
+                            ${images.map(img => `
+                                <div class="image-thumb ${img.selected ? 'selected-image' : ''}">
+                                    <img src="${img.image_url}" alt="Design variation" />
+                                    ${img.selected ? '<div class="selected-overlay">✓</div>' : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
                 </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
 
     } catch (error) {
         console.error('Error loading design history:', error);
@@ -231,6 +278,62 @@ async function loadUserPreferences() {
 
     } catch (error) {
         console.error('Error loading preferences:', error);
+    }
+}
+
+// Select a specific image from a design
+async function selectImage(roomId, versionId, imageId) {
+    try {
+        const response = await fetch(`/api/rooms/${roomId}/designs/${versionId}/select?user_id=${USER_ID}&image_id=${imageId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to select design');
+        }
+
+        // Reload design history and preferences
+        await loadDesignHistory(roomId);
+        await loadUserPreferences();
+        addMessageToChat('Design selected! Your preferences have been updated.', 'system');
+
+    } catch (error) {
+        console.error('Error selecting design:', error);
+        addMessageToChat('Failed to select design. Please try again.', 'system');
+    }
+}
+
+// Legacy function for compatibility
+async function selectDesign(roomId, versionId) {
+    return selectImage(roomId, versionId, null);
+}
+
+// Reject a design
+async function rejectDesign(roomId, versionId) {
+    try {
+        const feedback = encodeURIComponent("I don't like this design");
+        const response = await fetch(`/api/rooms/${roomId}/designs/${versionId}/reject?user_id=${USER_ID}&feedback=${feedback}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to reject design');
+        }
+
+        // Reload design history and preferences
+        await loadDesignHistory(roomId);
+        await loadUserPreferences();
+        addMessageToChat('Design rejected. Your preferences have been updated.', 'system');
+
+    } catch (error) {
+        console.error('Error rejecting design:', error);
+        addMessageToChat('Failed to reject design. Please try again.', 'system');
     }
 }
 

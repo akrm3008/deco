@@ -66,21 +66,29 @@ class MemoryManager:
         )
 
         # Add to vector store index (automatically embeds)
-        self.vector_store.index.insert(doc)
+        try:
+            self.vector_store.index.insert(doc)
+        except Exception as e:
+            # Log error but don't fail the request if embedding fails
+            print(f"WARNING: Failed to embed conversation (rate limit?): {e}")
+            # Continue without embedding - conversation history still works via recent context
 
         # Learn preferences from user messages
         if role == MessageRole.USER:
-            preferences = self.learner.extract_preferences_from_text(
-                message, user_id, room_id
-            )
-            for pref in preferences:
-                self.learner.update_preference_confidence(
-                    user_id,
-                    pref.preference_type,
-                    pref.preference_value,
-                    confidence_delta=0.1,  # Implicit mention
-                    source_room_id=room_id,
+            try:
+                preferences = self.learner.extract_preferences_from_text(
+                    message, user_id, room_id
                 )
+                for pref in preferences:
+                    self.learner.update_preference_confidence(
+                        user_id,
+                        pref.preference_type,
+                        pref.preference_value,
+                        confidence_delta=0.1,  # Implicit mention
+                        source_room_id=room_id,
+                    )
+            except Exception as e:
+                print(f"WARNING: Failed to extract preferences: {e}")
 
         return conv_message
 

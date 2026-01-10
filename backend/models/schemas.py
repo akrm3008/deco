@@ -31,6 +31,7 @@ class DesignVersion(BaseModel):
     version_number: int
     description: str
     selected: bool = False
+    rejected: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     parent_version_id: Optional[str] = None
 
@@ -77,12 +78,18 @@ class ChatRequest(BaseModel):
     session_id: str
 
 
+class ImageData(BaseModel):
+    """Image data for chat response."""
+    id: str
+    url: str
+
+
 class ChatResponse(BaseModel):
     """Chat response model."""
     message: str
     room_id: Optional[str] = None
     design_version_id: Optional[str] = None
-    images: list[str] = Field(default_factory=list)
+    images: list[ImageData] = Field(default_factory=list)
 
 
 class RoomListResponse(BaseModel):

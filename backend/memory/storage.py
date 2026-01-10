@@ -126,6 +126,15 @@ class DataStorage:
         versions = self.get_room_design_versions(room_id)
         return versions[-1] if versions else None
 
+    def update_design_version(self, version: DesignVersion) -> DesignVersion:
+        """Update an existing design version."""
+        versions = self._load_json(self.design_versions_file)
+        if version.id not in versions:
+            raise ValueError(f"Design version {version.id} not found")
+        versions[version.id] = version.model_dump()
+        self._save_json(self.design_versions_file, versions)
+        return version
+
     # Design image operations
     def create_design_image(self, image: DesignImage) -> DesignImage:
         """Create a new design image."""
