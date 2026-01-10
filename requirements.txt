@@ -6,19 +6,14 @@ python-dotenv==1.0.0
 # Anthropic API
 anthropic>=0.26.0,<0.29.0
 
-# LlamaIndex - Minimal setup (no optional readers)
-llama-index-core==0.10.17
+# OpenAI API (for gpt-image-1.5)
+openai>=1.0.0
 
-# LlamaIndex integrations
-llama-index-vector-stores-chroma==0.1.9
-llama-index-llms-anthropic==0.1.15
-llama-index-embeddings-huggingface==0.2.2
-llama-index-embeddings-openai==0.1.11
+# Supabase (for image storage)
+supabase>=2.0.0
 
-# Vector Database
+# Vector Database with local embeddings
 chromadb==0.4.22
-
-# Local embeddings
 sentence-transformers>=2.0.0
 
 # Web framework

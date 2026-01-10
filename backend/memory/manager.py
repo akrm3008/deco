@@ -1,15 +1,12 @@
 """Memory manager orchestrating all memory operations."""
 from datetime import datetime
-from typing import List, Optional
-
-from llama_index.core import Document
-from llama_index.core.schema import NodeWithScore
+from typing import List, Optional, Dict, Tuple
+import uuid
 
 from backend.config import config
 from backend.memory.learner import preference_learner
-from backend.memory.retriever import HybridRetriever
 from backend.memory.storage import storage
-from backend.memory.vector_store import vector_store_manager
+from backend.memory.chroma_store import ChromaStore
 from backend.models.schemas import ConversationMessage, UserPreference
 from backend.models.types import MessageRole
 
@@ -18,7 +15,11 @@ class MemoryManager:
     """Orchestrates all memory operations for the design agent."""
 
     def __init__(self):
-        self.vector_store = vector_store_manager
+        # Initialize ChromaDB with HuggingFace embeddings
+        self.chroma = ChromaStore(
+            persist_directory=config.CHROMA_DB_PATH,
+            model_name="BAAI/bge-small-en-v1.5"
+        )
         self.storage = storage
         self.learner = preference_learner
 
@@ -52,25 +53,23 @@ class MemoryManager:
             room_id=room_id,
         )
 
-        # Create LlamaIndex document with metadata
-        doc = Document(
-            text=message,
-            metadata={
-                "user_id": user_id,
-                "session_id": session_id,
-                "role": role.value,
-                "room_id": room_id or "",
-                "timestamp": conv_message.created_at.isoformat(),
-                "message_id": conv_message.id,
-            },
-        )
-
-        # Add to vector store index (automatically embeds)
+        # Add to ChromaDB with metadata
         try:
-            self.vector_store.index.insert(doc)
+            self.chroma.add(
+                documents=[message],
+                metadatas=[{
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "role": role.value,
+                    "room_id": room_id or "",
+                    "timestamp": conv_message.created_at.isoformat(),
+                    "message_id": conv_message.id,
+                }],
+                ids=[conv_message.id]
+            )
         except Exception as e:
             # Log error but don't fail the request if embedding fails
-            print(f"WARNING: Failed to embed conversation (rate limit?): {e}")
+            print(f"WARNING: Failed to embed conversation: {e}")
             # Continue without embedding - conversation history still works via recent context
 
         # Learn preferences from user messages
@@ -98,9 +97,9 @@ class MemoryManager:
         user_id: str,
         room_id: Optional[str] = None,
         top_k: int = None,
-    ) -> List[NodeWithScore]:
+    ) -> List[Dict]:
         """
-        Retrieve relevant conversation context using hybrid search.
+        Retrieve relevant conversation context using semantic search.
 
         Args:
             query: Query text
@@ -109,26 +108,43 @@ class MemoryManager:
             top_k: Number of results to return
 
         Returns:
-            List of relevant conversation nodes with scores
+            List of dicts with 'text', 'metadata', 'score'
         """
-        # Get base retriever
-        base_retriever = self.vector_store.get_retriever(similarity_top_k=top_k or config.SIMILARITY_TOP_K * 2)
+        try:
+            # Build metadata filter
+            where_filter = {"user_id": user_id}
+            if room_id:
+                where_filter["room_id"] = room_id
 
-        # Create hybrid retriever with filters
-        hybrid_retriever = HybridRetriever(
-            base_retriever=base_retriever,
-            user_id=user_id,
-            room_id=room_id,
-            top_k=top_k or config.SIMILARITY_TOP_K,
-        )
+            # Query ChromaDB
+            results = self.chroma.query(
+                query_text=query,
+                n_results=top_k or config.SIMILARITY_TOP_K,
+                where=where_filter
+            )
 
-        # Retrieve relevant nodes
-        from llama_index.core.schema import QueryBundle
+            # Format results
+            nodes = []
+            if results and results['documents'] and len(results['documents']) > 0:
+                docs = results['documents'][0]  # First query result
+                metadatas = results['metadatas'][0] if results['metadatas'] else []
+                distances = results['distances'][0] if results['distances'] else []
 
-        query_bundle = QueryBundle(query_str=query)
-        nodes = hybrid_retriever.retrieve(query_bundle)
+                for i, doc in enumerate(docs):
+                    # Convert distance to similarity score (1 - distance for cosine)
+                    score = 1.0 - distances[i] if i < len(distances) else 0.0
+                    metadata = metadatas[i] if i < len(metadatas) else {}
 
-        return nodes
+                    nodes.append({
+                        "text": doc,
+                        "metadata": metadata,
+                        "score": score
+                    })
+
+            return nodes
+        except Exception as e:
+            print(f"WARNING: Failed to retrieve context: {e}")
+            return []
 
     def get_user_preferences(
         self, user_id: str, confidence_threshold: float = None
@@ -156,7 +172,11 @@ class MemoryManager:
         - Current room information
         """
         # Retrieve relevant conversations
-        nodes = self.retrieve_relevant_context(query, user_id, room_id)
+        try:
+            nodes = self.retrieve_relevant_context(query, user_id, room_id)
+        except Exception as e:
+            print(f"WARNING: Failed to retrieve context (rate limit?): {e}")
+            nodes = []  # Continue without semantic search context
 
         # Get user preferences
         preferences = self.get_user_preferences(user_id)
@@ -190,11 +210,11 @@ class MemoryManager:
         if nodes:
             context_parts.append("## Relevant Past Conversations")
             for i, node in enumerate(nodes, 1):
-                metadata = node.node.metadata
+                metadata = node.get("metadata", {})
                 role = metadata.get("role", "unknown")
                 timestamp = metadata.get("timestamp", "")
-                text = node.node.text
-                score = node.score
+                text = node.get("text", "")
+                score = node.get("score", 0.0)
 
                 context_parts.append(
                     f"{i}. [{role}] (relevance: {score:.2f}): {text[:200]}..."

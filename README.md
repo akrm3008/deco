@@ -5,21 +5,21 @@ An AI-powered interior design assistant with persistent memory across sessions. 
 ## Features
 
 - **Persistent Memory**: Remembers user preferences, past designs, and conversations across sessions spanning days or weeks
-- **Semantic Search**: Uses vector embeddings (ChromaDB + LlamaIndex) to retrieve relevant context from past conversations
+- **Semantic Search**: Uses local vector embeddings (ChromaDB + HuggingFace) to retrieve relevant context from past conversations
 - **Preference Learning**: Automatically learns and strengthens user preferences (style, warmth, complexity) based on selections and feedback
 - **Design Version Tracking**: Maintains hierarchical design history with parent-child relationships
 - **Cross-Room Consistency**: Applies learned preferences across different rooms ("design my living room like my bedroom")
+- **AI Image Generation**: Real interior design images using OpenAI's gpt-image-1 model
 - **Real-time Chat**: Interactive web interface with instant design feedback
 
 ## Tech Stack
 
 - **Backend**: Python 3.11+, FastAPI
 - **Vector Database**: ChromaDB (local, zero-setup)
-- **Memory/RAG**: LlamaIndex
+- **Embeddings**: Local HuggingFace models (sentence-transformers) - no API key required
 - **LLM**: Claude 4.5 Sonnet (Anthropic API)
-- **Embeddings**: Voyage AI or OpenAI
+- **Image Generation**: OpenAI gpt-image-1 (optional, falls back to placeholder)
 - **Frontend**: HTML, CSS, JavaScript with HTMX
-- **Image Generation**: Flexible module (placeholder, GPT-Image-1.5, or custom)
 
 ## Quick Start
 
@@ -27,7 +27,7 @@ An AI-powered interior design assistant with persistent memory across sessions. 
 
 - Python 3.11 or higher
 - Anthropic API key ([get one here](https://console.anthropic.com/))
-- Voyage AI API key (recommended) or OpenAI API key for embeddings
+- OpenAI API key (optional, for AI image generation - [get one here](https://platform.openai.com/))
 
 ### 2. Installation
 
@@ -52,10 +52,13 @@ cp .env.example .env
 # Edit .env and add your API keys
 # Required:
 ANTHROPIC_API_KEY=your_anthropic_key_here
-VOYAGE_API_KEY=your_voyage_key_here  # or OPENAI_API_KEY
 
-# Optional (for image generation)
-IMAGE_GENERATOR=placeholder  # Start with placeholder
+# Optional (for AI image generation):
+OPENAI_API_KEY=your_openai_key_here
+IMAGE_GENERATOR=gpt-image-1  # Use 'placeholder' for testing without API calls
+
+# Embeddings run locally - no API key needed!
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 ```
 
 ### 4. Run the Application
@@ -123,13 +126,12 @@ deco/
 │   │   └── types.py            # Enums and types
 │   ├── memory/
 │   │   ├── manager.py          # Memory orchestration
-│   │   ├── vector_store.py     # ChromaDB setup
-│   │   ├── retriever.py        # Hybrid search retriever
+│   │   ├── chroma_store.py     # ChromaDB wrapper with HuggingFace embeddings
 │   │   ├── learner.py          # Preference learning
-│   │   └── storage.py          # JSON/SQLite storage
+│   │   └── storage.py          # JSON storage for rooms/designs/preferences
 │   ├── agent/
 │   │   ├── design_agent.py     # Main agent logic
-│   │   ├── image_generator.py  # Image generation module
+│   │   ├── image_generator.py  # OpenAI gpt-image-1 integration
 │   │   └── prompts.py          # System prompts
 │   └── api/
 │       └── routes.py           # API endpoints
@@ -189,20 +191,23 @@ Response: {
 
 ## Memory System Architecture
 
-### 1. Vector Storage (ChromaDB)
-- Stores all conversation messages with embeddings
-- Enables semantic search for relevant context
+### 1. Vector Storage (ChromaDB + HuggingFace)
+- Stores all conversation messages with local embeddings (BAAI/bge-small-en-v1.5)
+- Enables semantic search for relevant context using cosine similarity
 - Metadata filtering by user, room, timestamp
+- **No API calls** - embeddings generated locally
 
 ### 2. Structured Storage (JSON)
 - Rooms, design versions, images
 - User preferences with confidence scores
 - Design hierarchy tracking
+- Stored in `./data/` directory
 
-### 3. Hybrid Retrieval
-- **Vector similarity** (70%): Semantic matching via embeddings
-- **Recency boosting** (30%): Exponential decay over time
-- **Metadata filtering**: By user_id, room_id
+### 3. Context Retrieval
+- **Semantic search**: Vector similarity using local embeddings
+- **Metadata filtering**: By user_id and room_id
+- **Top-K retrieval**: Configurable (default: 5 most relevant messages)
+- **Graceful degradation**: Falls back if embeddings fail
 
 ### 4. Preference Learning
 - **Implicit**: Detects keywords in conversation (+0.1 confidence)
@@ -212,36 +217,31 @@ Response: {
 
 ## Configuration Options
 
-### Embedding Providers
+### Embeddings (Local)
 
-**Voyage AI** (Recommended):
+Embeddings run locally using HuggingFace sentence-transformers. No API key required!
+
+**Default** (Recommended):
 ```env
-EMBEDDING_PROVIDER=voyage
-VOYAGE_API_KEY=your_key
-EMBEDDING_MODEL=voyage-3
-EMBEDDING_DIMENSION=1024
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+EMBEDDING_DIMENSION=384
 ```
 
-**OpenAI**:
-```env
-EMBEDDING_PROVIDER=openai
-OPENAI_API_KEY=your_key
-EMBEDDING_MODEL=text-embedding-3-small
-EMBEDDING_DIMENSION=1536
-```
+**Other options**:
+- `all-MiniLM-L6-v2` (384 dimensions) - Faster, slightly less accurate
+- `all-mpnet-base-v2` (768 dimensions) - Slower, more accurate
 
 ### Image Generation
 
-**Placeholder** (Default):
+**Placeholder** (Default - for development):
 ```env
 IMAGE_GENERATOR=placeholder
 ```
 
-**Custom API** (GPT-Image-1.5):
+**OpenAI gpt-image-1** (Real AI images):
 ```env
-IMAGE_GENERATOR=gpt-image-1.5
-IMAGE_API_KEY=your_key
-IMAGE_ENDPOINT=https://api.example.com/generate
+IMAGE_GENERATOR=gpt-image-1
+OPENAI_API_KEY=your_openai_api_key
 ```
 
 ## Development
@@ -271,29 +271,43 @@ LOG_LEVEL=DEBUG  # Options: DEBUG, INFO, WARNING, ERROR
 ### Issue: "ANTHROPIC_API_KEY is required"
 **Solution**: Add your Anthropic API key to `.env` file
 
-### Issue: "Failed to import chromadb"
+### Issue: "Failed to import chromadb" or "sentence-transformers not found"
 **Solution**: Reinstall dependencies: `pip install -r requirements.txt`
 
-### Issue: No embeddings being generated
-**Solution**: Check that VOYAGE_API_KEY or OPENAI_API_KEY is set correctly
+### Issue: OpenAI image generation errors
+**Solution**:
+- Check that `OPENAI_API_KEY` is set correctly in `.env`
+- Verify `IMAGE_GENERATOR=gpt-image-1` (not gpt-image-1.5)
+- For testing without API costs, use `IMAGE_GENERATOR=placeholder`
 
 ### Issue: Memory not persisting across restarts
 **Solution**: Check that `./chroma_db` and `./data` directories exist and have write permissions
 
+### Issue: "Embedding dimension 384 does not match collection dimensionality 1024"
+**Solution**: Clear old ChromaDB data that used different embedding dimensions:
+```bash
+rm -rf chroma_db/
+```
+Then restart the server. This happens when switching embedding models.
+
 ## Performance Considerations
 
-- **Embedding generation**: ~100-200ms per message (cached by ChromaDB)
+- **Local embeddings**: ~50-100ms per message on first use (then cached)
 - **Vector search**: ~10-50ms for similarity search
 - **Claude API**: ~1-3s for response generation
-- **Total response time**: ~2-4s end-to-end
+- **OpenAI gpt-image-1**: ~3-5s per image (generates 3 images per design)
+- **Total response time**:
+  - Text only: ~2-4s
+  - With images: ~12-18s (for 3 images)
 
 ## Future Enhancements
 
 - Multi-user authentication and authorization
-- Real AI image generation (DALL-E, Flux, Stable Diffusion)
+- Additional image models (DALL-E 3, Flux, Stable Diffusion)
 - Export designs to PDF/mood boards
 - Collaborative design sessions
 - Budget tracking and shopping list integration
+- 3D room visualization
 - Mobile app (React Native)
 - Voice interface
 
@@ -307,4 +321,4 @@ For questions or support regarding this implementation, please reach out through
 
 ---
 
-**Built with ❤️ using Claude 4.5 Sonnet, LlamaIndex, and ChromaDB**
+**Built with ❤️ using Claude 4.5 Sonnet, ChromaDB, HuggingFace, and OpenAI**

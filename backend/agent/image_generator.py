@@ -2,10 +2,14 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 from urllib.parse import quote
+import base64
+import uuid
+from pathlib import Path
 
 import httpx
 
 from backend.config import config
+from backend.agent.image_storage import image_storage
 
 
 class ImageGenerator(ABC):
@@ -42,37 +46,58 @@ class PlaceholderGenerator(ImageGenerator):
 
 
 class GPTImageGenerator(ImageGenerator):
-    """GPT-Image-1.5 integration (configurable with API details)."""
+    """GPT-Image-1.5 integration using OpenAI API."""
 
-    def __init__(self, api_key: str, endpoint: str):
-        self.api_key = api_key
-        self.endpoint = endpoint
-        self.client = httpx.AsyncClient(timeout=60.0)
+    def __init__(self, api_key: str):
+        """Initialize with OpenAI API key."""
+        from openai import OpenAI
+        self.client = OpenAI(api_key=api_key)
 
     async def generate(self, prompt: str, style: Optional[str] = None) -> str:
         """
-        Generate image using GPT-Image-1.5 API.
+        Generate image using OpenAI's gpt-5 with image generation tools.
 
-        Note: Implementation pending API documentation.
-        Once you provide the API details, this will be configured to:
-        1. POST to the endpoint with the prompt
-        2. Handle authentication with the API key
-        3. Parse the response to get the image URL
+        Args:
+            prompt: Text description of the image to generate
+            style: Optional style modifier
+
+        Returns:
+            URL path to the generated image (e.g., /static/images/uuid.png)
         """
         full_prompt = f"{prompt}, {style} style" if style else prompt
 
-        # Placeholder implementation
-        # TODO: Replace with actual API call once details are provided
-        # Example structure:
-        # response = await self.client.post(
-        #     self.endpoint,
-        #     headers={"Authorization": f"Bearer {self.api_key}"},
-        #     json={"prompt": full_prompt}
-        # )
-        # return response.json()["image_url"]
+        try:
+            # Generate image using OpenAI responses API with image generation tool
+            response = self.client.responses.create(
+                model="gpt-5",
+                input=full_prompt,
+                tools=[{"type": "image_generation", "action": "generate"}],
+            )
 
-        # For now, return placeholder
-        return f"https://placehold.co/800x600/ccccff/000000?text=GPT-Image-{quote(full_prompt[:50])}"
+            # Extract image data from response
+            image_data = [
+                output.result
+                for output in response.output
+                if output.type == "image_generation_call"
+            ]
+
+            if not image_data:
+                raise Exception("No image data received from OpenAI")
+
+            # Decode base64 image
+            image_base64 = image_data[0]
+            image_bytes = base64.b64decode(image_base64)
+
+            # Save image using configured storage backend (local or Supabase)
+            url, filename = image_storage.save(image_bytes, full_prompt)
+
+            return url
+
+        except Exception as e:
+            print(f"Error generating image with OpenAI: {e}")
+            # Fallback to placeholder on error
+            encoded_prompt = quote(full_prompt[:100])
+            return f"https://placehold.co/800x600/ffcccc/000000?text=Error-{encoded_prompt}"
 
 
 class BananaProGenerator(ImageGenerator):
@@ -115,13 +140,11 @@ class BananaProGenerator(ImageGenerator):
 
 def get_image_generator() -> ImageGenerator:
     """Get the configured image generator based on config."""
-    if config.IMAGE_GENERATOR == "gpt-image-1.5":
-        if not config.IMAGE_API_KEY or not config.IMAGE_ENDPOINT:
-            print("Warning: GPT-Image-1.5 not fully configured, falling back to placeholder")
+    if config.IMAGE_GENERATOR == "gpt-5":
+        if not config.OPENAI_API_KEY:
+            print("Warning: OPENAI_API_KEY not configured, falling back to placeholder")
             return PlaceholderGenerator()
-        return GPTImageGenerator(
-            api_key=config.IMAGE_API_KEY, endpoint=config.IMAGE_ENDPOINT
-        )
+        return GPTImageGenerator(api_key=config.OPENAI_API_KEY)
     elif config.IMAGE_GENERATOR == "banana-pro":
         if not config.IMAGE_API_KEY or not config.IMAGE_MODEL_KEY:
             print("Warning: Banana Pro not fully configured, falling back to placeholder")

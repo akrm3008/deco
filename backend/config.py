@@ -14,17 +14,23 @@ class Config:
     # Anthropic API
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 
-    # Embedding configuration
-    EMBEDDING_PROVIDER: Literal["voyage", "openai", "huggingface"] = os.getenv("EMBEDDING_PROVIDER", "huggingface")
-    VOYAGE_API_KEY: str = os.getenv("VOYAGE_API_KEY", "")
+    # OpenAI API (for gpt-image-1)
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+
+    # Supabase (for image storage)
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
+    SUPABASE_BUCKET: str = os.getenv("SUPABASE_BUCKET", "design-images")
+
+    # Embedding configuration (local HuggingFace model)
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
     EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "384"))
 
     # Image generation
-    IMAGE_GENERATOR: Literal["gpt-image-1.5", "banana-pro", "placeholder"] = os.getenv(
+    IMAGE_GENERATOR: Literal["gpt-5", "banana-pro", "placeholder"] = os.getenv(
         "IMAGE_GENERATOR", "placeholder"
     )
+    IMAGE_STORAGE: Literal["local", "supabase"] = os.getenv("IMAGE_STORAGE", "local")
     IMAGE_API_KEY: str = os.getenv("IMAGE_API_KEY", "")
     IMAGE_ENDPOINT: str = os.getenv("IMAGE_ENDPOINT", "")
     IMAGE_MODEL_KEY: str = os.getenv("IMAGE_MODEL_KEY", "")
@@ -32,6 +38,7 @@ class Config:
     # Paths
     CHROMA_DB_PATH: Path = Path(os.getenv("CHROMA_DB_PATH", "./chroma_db"))
     DATA_STORAGE_PATH: Path = Path(os.getenv("DATA_STORAGE_PATH", "./data"))
+    STATIC_IMAGES_PATH: Path = Path(os.getenv("STATIC_IMAGES_PATH", "./frontend/static/images"))
 
     # App settings
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
@@ -52,17 +59,16 @@ class Config:
         if not cls.ANTHROPIC_API_KEY:
             raise ValueError("ANTHROPIC_API_KEY is required")
 
-        if cls.EMBEDDING_PROVIDER == "voyage" and not cls.VOYAGE_API_KEY:
-            raise ValueError("VOYAGE_API_KEY is required when using Voyage embeddings")
+        # Validate OpenAI API key if using gpt-5
+        if cls.IMAGE_GENERATOR == "gpt-5" and not cls.OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY is required when IMAGE_GENERATOR=gpt-5")
 
-        if cls.EMBEDDING_PROVIDER == "openai" and not cls.OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY is required when using OpenAI embeddings")
-
-        # HuggingFace embeddings don't require API keys - they run locally
+        # HuggingFace embeddings run locally - no API keys needed
 
         # Create directories if they don't exist
         cls.CHROMA_DB_PATH.mkdir(parents=True, exist_ok=True)
         cls.DATA_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
+        cls.STATIC_IMAGES_PATH.mkdir(parents=True, exist_ok=True)
 
 
 # Create config instance
