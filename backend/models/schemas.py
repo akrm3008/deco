@@ -9,8 +9,10 @@ from backend.models.types import MessageRole, PreferenceType, RoomType
 
 
 class User(BaseModel):
-    """User model."""
+    """User model with authentication."""
     id: str = Field(default_factory=lambda: str(uuid4()))
+    username: Optional[str] = None
+    password_hash: Optional[str] = None  # Never expose this in responses
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -106,3 +108,23 @@ class DesignVersionListResponse(BaseModel):
 class PreferenceListResponse(BaseModel):
     """Preference list response."""
     preferences: list[UserPreference]
+
+
+# Authentication models
+class UserResponse(BaseModel):
+    """User response (without password)."""
+    id: str
+    username: str
+    created_at: datetime
+
+
+class LoginRequest(BaseModel):
+    """Login request."""
+    username: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    """Registration request."""
+    username: str
+    password: str

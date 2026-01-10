@@ -1,11 +1,30 @@
 // Interior Design Agent - Frontend JavaScript
 
-// Generate a user ID (in production, this would be from authentication)
-const USER_ID = localStorage.getItem('user_id') || (() => {
-    const id = 'user-' + Math.random().toString(36).substr(2, 9);
-    localStorage.setItem('user_id', id);
-    return id;
-})();
+// Check authentication
+const getAuthenticatedUser = () => {
+    const userData = localStorage.getItem('authenticated_user');
+    if (!userData) {
+        // Redirect to login page
+        window.location.href = '/login';
+        return null;
+    }
+    try {
+        return JSON.parse(userData);
+    } catch (e) {
+        console.error('Failed to parse user data:', e);
+        localStorage.removeItem('authenticated_user');
+        window.location.href = '/login';
+        return null;
+    }
+};
+
+const AUTHENTICATED_USER = getAuthenticatedUser();
+if (!AUTHENTICATED_USER) {
+    // Redirect happened
+    throw new Error('Not authenticated');
+}
+
+const USER_ID = AUTHENTICATED_USER.id;
 
 // Generate a session ID for this browser session
 const SESSION_ID = 'session-' + Math.random().toString(36).substr(2, 9);
@@ -13,11 +32,15 @@ const SESSION_ID = 'session-' + Math.random().toString(36).substr(2, 9);
 // Current room ID
 let currentRoomId = null;
 
+// Track pending design selections (versions waiting for user to select or reject)
+let pendingSelections = new Set();
+
 // Initialize the app
 document.addEventListener('DOMContentLoaded', () => {
     initializeChatForm();
     loadUserRooms();
     loadUserPreferences();
+    updateChatInputState();
 });
 
 // Initialize chat form submission
@@ -119,7 +142,10 @@ function addMessageToChat(message, role, images = [], versionId = null, roomId =
 
     // Add images if present with Select/Reject buttons
     if (images && images.length > 0 && versionId && roomId) {
-        content += `<div class="design-images">`;
+        // Add this version to pending selections
+        pendingSelections.add(versionId);
+
+        content += `<div class="design-images" data-version-id="${versionId}" data-room-id="${roomId}">`;
         images.forEach(imageData => {
             content += `<div class="design-image-container">
                 <div class="design-image">
@@ -129,13 +155,23 @@ function addMessageToChat(message, role, images = [], versionId = null, roomId =
                     <button class="btn-select" onclick="selectImage('${roomId}', '${versionId}', '${imageData.id}')">
                         👍 Select This Design
                     </button>
-                    <button class="btn-reject" onclick="rejectDesign('${roomId}', '${versionId}')">
-                        👎 Reject All
-                    </button>
                 </div>
             </div>`;
         });
+
+        // Add a single "Reject All" button for the entire version
+        content += `
+            <div class="version-actions">
+                <button class="btn-reject-all" onclick="rejectDesign('${roomId}', '${versionId}')">
+                    👎 Reject All Designs
+                </button>
+            </div>
+        `;
+
         content += `</div>`;
+
+        // Update chat input state
+        setTimeout(() => updateChatInputState(), 100);
     }
 
     messageDiv.innerHTML = content;
@@ -295,10 +331,19 @@ async function selectImage(roomId, versionId, imageId) {
             throw new Error('Failed to select design');
         }
 
+        // Remove from pending selections
+        pendingSelections.delete(versionId);
+
+        // Hide selection buttons for this version
+        hideSelectionButtons(versionId);
+
         // Reload design history and preferences
         await loadDesignHistory(roomId);
         await loadUserPreferences();
         addMessageToChat('Design selected! Your preferences have been updated.', 'system');
+
+        // Update chat input state
+        updateChatInputState();
 
     } catch (error) {
         console.error('Error selecting design:', error);
@@ -326,10 +371,19 @@ async function rejectDesign(roomId, versionId) {
             throw new Error('Failed to reject design');
         }
 
+        // Remove from pending selections
+        pendingSelections.delete(versionId);
+
+        // Hide selection buttons for this version
+        hideSelectionButtons(versionId);
+
         // Reload design history and preferences
         await loadDesignHistory(roomId);
         await loadUserPreferences();
-        addMessageToChat('Design rejected. Your preferences have been updated.', 'system');
+        addMessageToChat('All designs rejected. Your preferences have been updated.', 'system');
+
+        // Update chat input state
+        updateChatInputState();
 
     } catch (error) {
         console.error('Error rejecting design:', error);
@@ -342,4 +396,44 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Hide selection buttons for a specific version
+function hideSelectionButtons(versionId) {
+    const designImagesDiv = document.querySelector(`.design-images[data-version-id="${versionId}"]`);
+    if (designImagesDiv) {
+        // Hide all select buttons
+        designImagesDiv.querySelectorAll('.btn-select').forEach(btn => {
+            btn.style.display = 'none';
+        });
+        // Hide the reject all button
+        const rejectBtn = designImagesDiv.querySelector('.btn-reject-all');
+        if (rejectBtn) {
+            rejectBtn.style.display = 'none';
+        }
+    }
+}
+
+// Update chat input state based on pending selections
+function updateChatInputState() {
+    const input = document.getElementById('message-input');
+    const submitBtn = document.querySelector('.send-button');
+
+    if (pendingSelections.size > 0) {
+        // Disable input when there are pending selections
+        input.disabled = true;
+        input.placeholder = 'Please select or reject a design to continue...';
+        if (submitBtn) submitBtn.disabled = true;
+    } else {
+        // Enable input when no pending selections
+        input.disabled = false;
+        input.placeholder = 'Describe the room you want to design...';
+        if (submitBtn) submitBtn.disabled = false;
+    }
+}
+
+// Logout function
+function logout() {
+    localStorage.removeItem('authenticated_user');
+    window.location.href = '/login';
 }

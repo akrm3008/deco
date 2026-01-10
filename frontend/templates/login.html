@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Interior Design Agent</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .login-container {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .login-header h1 {
+            color: #333;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .login-header p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+            box-sizing: border-box;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 12px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .btn:hover {
+            background: #5568d3;
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .toggle-mode {
+            text-align: center;
+            margin-top: 20px;
+            color: #666;
+        }
+
+        .toggle-mode a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .toggle-mode a:hover {
+            text-decoration: underline;
+        }
+
+        .error-message {
+            background: #fee;
+            color: #c33;
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        .success-message {
+            background: #efe;
+            color: #3c3;
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .success-message.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <h1>Interior Design Agent</h1>
+            <p id="mode-description">Sign in to continue</p>
+        </div>
+
+        <div id="error-message" class="error-message"></div>
+        <div id="success-message" class="success-message"></div>
+
+        <form id="auth-form">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required autocomplete="username">
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required autocomplete="current-password">
+            </div>
+
+            <button type="submit" class="btn" id="submit-btn">Sign In</button>
+        </form>
+
+        <div class="toggle-mode">
+            <span id="toggle-text">Don't have an account?</span>
+            <a href="#" id="toggle-link">Sign Up</a>
+        </div>
+    </div>
+
+    <script>
+        let isSignUpMode = false;
+
+        const form = document.getElementById('auth-form');
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        const submitBtn = document.getElementById('submit-btn');
+        const toggleLink = document.getElementById('toggle-link');
+        const toggleText = document.getElementById('toggle-text');
+        const modeDescription = document.getElementById('mode-description');
+        const errorMessage = document.getElementById('error-message');
+        const successMessage = document.getElementById('success-message');
+
+        toggleLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            isSignUpMode = !isSignUpMode;
+
+            if (isSignUpMode) {
+                submitBtn.textContent = 'Sign Up';
+                toggleText.textContent = 'Already have an account?';
+                toggleLink.textContent = 'Sign In';
+                modeDescription.textContent = 'Create your account';
+            } else {
+                submitBtn.textContent = 'Sign In';
+                toggleText.textContent = "Don't have an account?";
+                toggleLink.textContent = 'Sign Up';
+                modeDescription.textContent = 'Sign in to continue';
+            }
+
+            hideMessages();
+        });
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.classList.add('show');
+            successMessage.classList.remove('show');
+        }
+
+        function showSuccess(message) {
+            successMessage.textContent = message;
+            successMessage.classList.add('show');
+            errorMessage.classList.remove('show');
+        }
+
+        function hideMessages() {
+            errorMessage.classList.remove('show');
+            successMessage.classList.remove('show');
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideMessages();
+            submitBtn.disabled = true;
+            submitBtn.textContent = isSignUpMode ? 'Signing up...' : 'Signing in...';
+
+            try {
+                const endpoint = isSignUpMode ? '/api/auth/signup' : '/api/auth/login';
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: usernameInput.value,
+                        password: passwordInput.value
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || (isSignUpMode ? 'Signup failed' : 'Login failed'));
+                }
+
+                const userData = await response.json();
+
+                if (isSignUpMode) {
+                    showSuccess('Account created successfully! Logging you in...');
+                }
+
+                // Store user data
+                localStorage.setItem('authenticated_user', JSON.stringify({
+                    id: userData.id,
+                    username: userData.username
+                }));
+
+                // Redirect to main app after a short delay
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, isSignUpMode ? 1000 : 0);
+
+            } catch (error) {
+                console.error('Authentication error:', error);
+                showError(error.message || 'An error occurred');
+                submitBtn.disabled = false;
+                submitBtn.textContent = isSignUpMode ? 'Sign Up' : 'Sign In';
+            }
+        });
+
+        // Check if already authenticated
+        const authenticatedUser = localStorage.getItem('authenticated_user');
+        if (authenticatedUser) {
+            window.location.href = '/';
+        }
+    </script>
+</body>
+</html>

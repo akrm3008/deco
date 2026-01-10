@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 
-from backend.api.routes import router
+from backend.api import routes, auth
 from backend.config import config
 
 # Configure logging
@@ -56,13 +56,20 @@ app.add_middleware(
 )
 
 # Include API routes
-app.include_router(router, prefix="/api", tags=["api"])
+app.include_router(routes.router, prefix="/api", tags=["api"])
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 
 # Templates
 templates = Jinja2Templates(directory="frontend/templates")
+
+
+@app.get("/login")
+async def login_page(request: Request):
+    """Render the login page."""
+    return templates.TemplateResponse("login.html", {"request": request})
 
 
 @app.get("/")

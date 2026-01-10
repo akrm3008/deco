@@ -62,6 +62,20 @@ class SupabaseDataStorage:
             print(f"Error getting user: {e}")
             return None
 
+    def get_user_by_username(self, username: str) -> Optional[User]:
+        """Get user by username."""
+        try:
+            result = (
+                self.client.table('users')
+                .select('*')
+                .eq('username', username)
+                .execute()
+            )
+            return User(**result.data[0]) if result.data else None
+        except APIError as e:
+            print(f"Error getting user by username: {e}")
+            return None
+
     # ==================== Room operations ====================
 
     def create_room(self, room: Room) -> Room:
