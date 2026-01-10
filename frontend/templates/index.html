@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interior Design Agent</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <h2>Interior Design Agent</h2>
+
+            <!-- Rooms List -->
+            <div class="section">
+                <h3>Your Rooms</h3>
+                <div id="rooms-list" class="rooms-list">
+                    <p class="empty-state">No rooms yet. Start a conversation to create your first room!</p>
+                </div>
+            </div>
+
+            <!-- Preferences Panel -->
+            <div class="section">
+                <h3>Your Preferences</h3>
+                <div id="preferences-list" class="preferences-list">
+                    <p class="empty-state">Preferences will be learned as you chat</p>
+                </div>
+            </div>
+
+            <!-- Design History -->
+            <div class="section">
+                <h3>Design History</h3>
+                <div id="design-history" class="design-history">
+                    <p class="empty-state">Select a room to view design history</p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-container">
+            <div class="chat-header">
+                <h1>💬 Chat with your AI Designer</h1>
+                <p class="subtitle">I'll remember your preferences across sessions!</p>
+            </div>
+
+            <div id="chat-messages" class="chat-messages">
+                <div class="message agent-message">
+                    <div class="message-content">
+                        <strong>Designer:</strong> Hello! I'm your AI interior designer. I can help you design any room in your home, and I'll remember your preferences across all our conversations. What room would you like to design today?
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-input-container">
+                <form id="chat-form" class="chat-form">
+                    <input
+                        type="text"
+                        id="message-input"
+                        class="message-input"
+                        placeholder="Describe the room you want to design..."
+                        required
+                        autocomplete="off"
+                    />
+                    <button type="submit" class="send-button">Send</button>
+                </form>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
