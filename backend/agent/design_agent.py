@@ -102,7 +102,7 @@ class DesignAgent:
             # Generate design version and images
             if room_id:
                 version_id, images = await self._generate_design_version(
-                    room_id, response_text, user_id
+                    room_id, response_text, user_id, user_message
                 )
                 print(f"DEBUG: Generated version {version_id} with {len(images)} images")
 
@@ -256,6 +256,96 @@ OUTPUT (one line only):"""
 
         return room.id
 
+    async def _get_reference_image(
+        self, user_id: str, room_id: str, parent_version_id: Optional[str], user_message: str
+    ) -> Optional[str]:
+        """
+        Get reference image URL for image editing mode or cross-room inspiration.
+
+        Returns reference image if:
+        1. Iterating on existing design (parent version exists with selected image)
+        2. Cross-room inspiration detected in user message
+
+        Args:
+            user_id: User ID
+            room_id: Current room ID
+            parent_version_id: Parent version ID (if iterating)
+            user_message: User's original message
+
+        Returns:
+            Reference image URL or None
+        """
+        # Case 1: Iterating on existing design (parent version exists)
+        if parent_version_id:
+            parent_images = self.storage.get_design_images(parent_version_id)
+            # Find selected image from parent version
+            for img in parent_images:
+                if img.selected:
+                    print(f"DEBUG: Using parent version image as reference for iteration: {img.image_url}")
+                    return img.image_url
+
+        # Case 2: Cross-room inspiration - check user message for room references
+        message_lower = user_message.lower()
+
+        # Patterns to detect cross-room references
+        cross_room_patterns = [
+            r"same (?:as|vibe as|style as|design as) (?:the |my )?(\w+)",
+            r"like (?:the |my )?(\w+)(?: room)?",
+            r"inspired by (?:the |my )?(\w+)",
+            r"similar to (?:the |my )?(\w+)",
+            r"match(?:ing)? (?:the |my )?(\w+)",
+        ]
+
+        referenced_room_name = None
+        for pattern in cross_room_patterns:
+            match = re.search(pattern, message_lower)
+            if match:
+                referenced_room_name = match.group(1).strip()
+                print(f"DEBUG: Detected cross-room reference: '{referenced_room_name}'")
+                break
+
+        # Find the referenced room and get its selected design image
+        if referenced_room_name:
+            user_rooms = self.storage.get_user_rooms(user_id)
+            for room in user_rooms:
+                # Skip current room
+                if room.id == room_id:
+                    continue
+
+                # Match by name or type
+                room_name_lower = room.name.lower()
+                room_type_lower = room.room_type.value.lower().replace('_', ' ')
+
+                if (
+                    referenced_room_name in room_name_lower
+                    or referenced_room_name in room_type_lower
+                    or room_name_lower in referenced_room_name
+                    or room_type_lower in referenced_room_name
+                ):
+                    print(f"DEBUG: Found matching room: {room.name} (type: {room.room_type.value})")
+                    # Get selected design from this room
+                    room_versions = self.storage.get_room_design_versions(room.id)
+                    for version in reversed(room_versions):  # Start with latest
+                        if version.selected:
+                            version_images = self.storage.get_design_images(version.id)
+                            for img in version_images:
+                                if img.selected:
+                                    print(
+                                        f"DEBUG: Using cross-room reference image from {room.name}: {img.image_url}"
+                                    )
+                                    return img.image_url
+
+                    # If no selected version, use latest version's first image
+                    if room_versions:
+                        latest_version = room_versions[-1]
+                        latest_images = self.storage.get_design_images(latest_version.id)
+                        if latest_images:
+                            print(f"DEBUG: Using latest image from {room.name} (no selection): {latest_images[0].image_url}")
+                            return latest_images[0].image_url
+
+        # No reference image found (new design from scratch)
+        return None
+
     def _is_design_response(self, response: str) -> bool:
         """Check if response contains an actual design description."""
         response_lower = response.lower()
@@ -309,7 +399,7 @@ OUTPUT (one line only):"""
         return is_design
 
     async def _generate_design_version(
-        self, room_id: str, design_description: str, user_id: str
+        self, room_id: str, design_description: str, user_id: str, user_message: str
     ) -> Tuple[str, List[dict]]:
         """Generate a design version with images."""
         # Get existing versions
@@ -318,6 +408,11 @@ OUTPUT (one line only):"""
 
         # Get parent version (latest)
         parent_id = versions[-1].id if versions else None
+
+        # Get reference image for editing mode or cross-room inspiration
+        reference_image_url = await self._get_reference_image(
+            user_id, room_id, parent_id, user_message
+        )
 
         # Create design version
         design_version = DesignVersion(
@@ -328,7 +423,7 @@ OUTPUT (one line only):"""
         )
         design_version = self.storage.create_design_version(design_version)
 
-        # Generate images (3-5 variations)
+        # Generate images (3 variations)
         num_images = 3
         image_data = []
 
@@ -336,8 +431,11 @@ OUTPUT (one line only):"""
             # Create variation prompt
             variation_prompt = f"{design_description[:200]} - variation {i+1}"
 
-            # Generate image
-            image_url = await self.image_gen.generate(variation_prompt)
+            # Generate image (with reference if available for editing)
+            image_url = await self.image_gen.generate(
+                variation_prompt,
+                reference_image_url=reference_image_url
+            )
 
             # Store image
             design_image = DesignImage(

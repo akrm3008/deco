@@ -262,7 +262,7 @@ async function loadDesignHistory(roomId) {
                     ${hasImages ? `
                         <div class="version-images">
                             ${images.map(img => `
-                                <div class="image-thumb ${img.selected ? 'selected-image' : ''}">
+                                <div class="image-thumb ${img.selected ? 'selected-image' : ''}" onclick="openImageModal('${img.image_url}', 'Design Version ${version.version_number}')">
                                     <img src="${img.image_url}" alt="Design variation" />
                                     ${img.selected ? '<div class="selected-overlay">✓</div>' : ''}
                                 </div>
@@ -437,3 +437,34 @@ function logout() {
     localStorage.removeItem('authenticated_user');
     window.location.href = '/login';
 }
+
+// Image Modal functions
+function openImageModal(imageSrc, caption) {
+    const modal = document.getElementById('imageModal');
+    const modalImg = document.getElementById('modalImage');
+    const modalCaption = document.getElementById('modalCaption');
+
+    modal.style.display = 'block';
+    modalImg.src = imageSrc;
+    modalCaption.innerHTML = caption || 'Design Image';
+}
+
+function closeImageModal() {
+    const modal = document.getElementById('imageModal');
+    modal.style.display = 'none';
+}
+
+// Close modal when clicking outside the image
+window.onclick = function(event) {
+    const modal = document.getElementById('imageModal');
+    if (event.target == modal) {
+        closeImageModal();
+    }
+}
+
+// Close modal with Escape key
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        closeImageModal();
+    }
+});

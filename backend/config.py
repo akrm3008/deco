@@ -17,6 +17,9 @@ class Config:
     # OpenAI API (for gpt-image-1)
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
+    # Google Gemini API (for image generation)
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+
     # Supabase (for image storage)
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
@@ -27,7 +30,7 @@ class Config:
     EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "384"))
 
     # Image generation
-    IMAGE_GENERATOR: Literal["gpt-5", "banana-pro", "placeholder"] = os.getenv(
+    IMAGE_GENERATOR: Literal["gpt-5", "gemini", "banana-pro", "placeholder"] = os.getenv(
         "IMAGE_GENERATOR", "placeholder"
     )
     IMAGE_STORAGE: Literal["local", "supabase"] = os.getenv("IMAGE_STORAGE", "local")
@@ -62,6 +65,10 @@ class Config:
         # Validate OpenAI API key if using gpt-5
         if cls.IMAGE_GENERATOR == "gpt-5" and not cls.OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY is required when IMAGE_GENERATOR=gpt-5")
+
+        # Validate Gemini API key if using gemini
+        if cls.IMAGE_GENERATOR == "gemini" and not cls.GEMINI_API_KEY:
+            raise ValueError("GEMINI_API_KEY is required when IMAGE_GENERATOR=gemini")
 
         # HuggingFace embeddings run locally - no API keys needed
 
