@@ -573,11 +573,6 @@ IMAGE_GENERATOR=gemini
 GEMINI_API_KEY=your_gemini_api_key
 ```
 
-**OpenAI GPT-5** (Text-to-image only, no editing):
-```env
-IMAGE_GENERATOR=gpt-5
-OPENAI_API_KEY=your_openai_api_key
-```
 
 **Placeholder** (Development/testing):
 ```env
