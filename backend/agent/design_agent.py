@@ -452,6 +452,8 @@ OUTPUT (one line only):"""
         self, user_id: str, design_version_id: str, image_id: Optional[str] = None
     ):
         """Mark a design as selected and learn preferences."""
+        import asyncio
+
         # Get design version
         version = self.storage.get_design_version(design_version_id)
         if not version:
@@ -462,17 +464,41 @@ OUTPUT (one line only):"""
         self.storage.update_design_version(version)
 
         # Mark image as selected if specified
+        selected_image_url = None
         if image_id:
             images = self.storage.get_design_images(design_version_id)
             for img in images:
                 if img.id == image_id:
                     img.selected = True
                     self.storage.update_design_image(img)
+                    selected_image_url = img.image_url
+                    break
 
-        # Learn preferences from selection
-        self.memory.learn_from_design_selection(
-            user_id, version.description, version.room_id
+        # ALL PREFERENCE LEARNING HAPPENS IN BACKGROUND (NON-BLOCKING)
+        # This ensures instant response to frontend
+        asyncio.create_task(
+            self._learn_preferences_background(
+                user_id, version.description, version.room_id, selected_image_url
+            )
         )
+
+    async def _learn_preferences_background(
+        self, user_id: str, description: str, room_id: Optional[str], image_url: Optional[str]
+    ):
+        """Run all preference learning in background without blocking selection response."""
+        try:
+            # Text-based learning (from description)
+            print(f"Background text-based learning started for user {user_id}")
+            self.memory.learn_from_design_selection(user_id, description, room_id)
+
+            # Image-based learning (visual analysis)
+            if image_url:
+                print(f"Background image analysis started for: {image_url}")
+                await self.memory.learn_from_selected_image(user_id, image_url, room_id)
+
+            print(f"Background preference learning completed for user {user_id}")
+        except Exception as e:
+            print(f"ERROR in background preference learning: {e}")
 
 
 # Global agent instance

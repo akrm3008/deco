@@ -320,30 +320,30 @@ async function loadUserPreferences() {
 // Select a specific image from a design
 async function selectImage(roomId, versionId, imageId) {
     try {
-        const response = await fetch(`/api/rooms/${roomId}/designs/${versionId}/select?user_id=${USER_ID}&image_id=${imageId}`, {
+        // INSTANT UI FEEDBACK - Hide buttons immediately
+        pendingSelections.delete(versionId);
+        hideSelectionButtons(versionId);
+        updateChatInputState();
+        addMessageToChat('Design selected! Learning your preferences...', 'system');
+
+        // API call in background (non-blocking)
+        const responsePromise = fetch(`/api/rooms/${roomId}/designs/${versionId}/select?user_id=${USER_ID}&image_id=${imageId}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             }
         });
 
+        // Reload UI data in parallel (non-blocking)
+        const historyPromise = loadDesignHistory(roomId);
+        const prefsPromise = loadUserPreferences();
+
+        // Wait for all to complete
+        const [response] = await Promise.all([responsePromise, historyPromise, prefsPromise]);
+
         if (!response.ok) {
             throw new Error('Failed to select design');
         }
-
-        // Remove from pending selections
-        pendingSelections.delete(versionId);
-
-        // Hide selection buttons for this version
-        hideSelectionButtons(versionId);
-
-        // Reload design history and preferences
-        await loadDesignHistory(roomId);
-        await loadUserPreferences();
-        addMessageToChat('Design selected! Your preferences have been updated.', 'system');
-
-        // Update chat input state
-        updateChatInputState();
 
     } catch (error) {
         console.error('Error selecting design:', error);

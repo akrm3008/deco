@@ -239,6 +239,72 @@ class MemoryManager:
         """Learn preferences from user feedback."""
         self.learner.learn_from_feedback(user_id, feedback, is_positive, room_id)
 
+    async def learn_from_selected_image(
+        self,
+        user_id: str,
+        image_url: str,
+        room_id: Optional[str] = None,
+    ):
+        """Learn visual preferences from selected image using image analysis."""
+        from backend.memory.image_analyzer import image_analyzer
+
+        try:
+            # Analyze the selected image
+            print(f"Analyzing selected image: {image_url}")
+            analysis = await image_analyzer.analyze_image(image_url)
+
+            # Extract color preferences
+            if analysis["colors"]:
+                for color_name, hex_code, percentage in analysis["colors"][:3]:  # Top 3 colors
+                    if percentage > 0.15:  # Only significant colors (>15%)
+                        self.learner.update_preference_confidence(
+                            user_id=user_id,
+                            preference_type=PreferenceType.COLOR,
+                            preference_value=color_name,
+                            confidence_delta=0.25 * percentage,  # Weight by color prominence
+                            source_room_id=room_id,
+                        )
+
+            # Extract material preferences
+            if analysis["materials"]:
+                for material, confidence in analysis["materials"]:
+                    self.learner.update_preference_confidence(
+                        user_id=user_id,
+                        preference_type=PreferenceType.MATERIAL,
+                        preference_value=material,
+                        confidence_delta=0.2 * confidence,  # Weight by detection confidence
+                        source_room_id=room_id,
+                    )
+
+            # Extract style preferences (visual analysis)
+            if analysis["styles"]:
+                for style, confidence in analysis["styles"]:
+                    self.learner.update_preference_confidence(
+                        user_id=user_id,
+                        preference_type=PreferenceType.STYLE,
+                        preference_value=style,
+                        confidence_delta=0.25 * confidence,  # Strong signal from visual detection
+                        source_room_id=room_id,
+                    )
+
+            # Extract warmth from color palette
+            if analysis["colors"]:
+                warmth = await image_analyzer.get_warmth_from_colors(analysis["colors"])
+                self.learner.update_preference_confidence(
+                    user_id=user_id,
+                    preference_type=PreferenceType.WARMTH,
+                    preference_value=warmth,
+                    confidence_delta=0.2,
+                    source_room_id=room_id,
+                )
+
+            print(f"Image analysis complete: {len(analysis['colors'])} colors, "
+                  f"{len(analysis['materials'])} materials, {len(analysis['styles'])} styles")
+
+        except Exception as e:
+            print(f"ERROR: Failed to analyze image for preference learning: {e}")
+            # Don't fail the selection if image analysis fails
+
 
 # Global memory manager instance
 memory_manager = MemoryManager()

@@ -34,6 +34,35 @@ class PreferenceLearner:
         "complex": ["detailed", "ornate", "elaborate", "rich"],
     }
 
+    COLOR_KEYWORDS = {
+        "blue": ["blue", "navy", "azure", "cobalt"],
+        "green": ["green", "sage", "olive", "emerald"],
+        "gray": ["gray", "grey", "charcoal", "slate"],
+        "white": ["white", "ivory", "cream", "off-white"],
+        "black": ["black", "ebony", "onyx"],
+        "brown": ["brown", "tan", "beige", "taupe", "caramel"],
+        "red": ["red", "burgundy", "crimson", "maroon"],
+        "yellow": ["yellow", "gold", "mustard"],
+        "orange": ["orange", "coral", "terracotta"],
+        "pink": ["pink", "rose", "blush"],
+        "purple": ["purple", "lavender", "plum", "violet"],
+    }
+
+    MATERIAL_KEYWORDS = {
+        "wood": ["wood", "wooden", "oak", "walnut", "pine", "teak"],
+        "metal": ["metal", "steel", "brass", "copper", "iron"],
+        "glass": ["glass"],
+        "fabric": ["fabric", "textile", "upholstered"],
+        "leather": ["leather"],
+        "stone": ["stone", "granite", "marble"],
+        "concrete": ["concrete"],
+        "ceramic": ["ceramic", "tile", "porcelain"],
+        "carpet": ["carpet", "rug"],
+        "velvet": ["velvet"],
+        "linen": ["linen"],
+        "rattan": ["rattan", "wicker"],
+    }
+
     def extract_preferences_from_text(
         self, text: str, user_id: str, source_room_id: Optional[str] = None
     ) -> List[UserPreference]:
@@ -76,6 +105,30 @@ class PreferenceLearner:
                     user_id=user_id,
                     preference_type=PreferenceType.COMPLEXITY,
                     preference_value=complexity_value,
+                    confidence=0.1,
+                    source_room_id=source_room_id,
+                )
+                preferences.append(pref)
+
+        # Extract color preferences
+        for color_value, keywords in self.COLOR_KEYWORDS.items():
+            if any(keyword in text_lower for keyword in keywords):
+                pref = UserPreference(
+                    user_id=user_id,
+                    preference_type=PreferenceType.COLOR,
+                    preference_value=color_value,
+                    confidence=0.1,
+                    source_room_id=source_room_id,
+                )
+                preferences.append(pref)
+
+        # Extract material preferences
+        for material_value, keywords in self.MATERIAL_KEYWORDS.items():
+            if any(keyword in text_lower for keyword in keywords):
+                pref = UserPreference(
+                    user_id=user_id,
+                    preference_type=PreferenceType.MATERIAL,
+                    preference_value=material_value,
                     confidence=0.1,
                     source_room_id=source_room_id,
                 )
