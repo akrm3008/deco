@@ -221,11 +221,11 @@ class GeminiImageGenerator(ImageGenerator):
                             }
                         })
 
-                        # Add editing instruction
+                        # Add editing instruction - MINIMAL text, let image guide
                         parts.append({
-                            "text": f"Using the provided image as reference, {full_prompt}. Maintain the overall style, lighting, and composition while making the requested changes."
+                            "text": f"Create an interior design inspired by this reference image. {full_prompt}. Maintain the overall style, color palette, materials, lighting, and visual atmosphere from the reference while incorporating the new space requirements."
                         })
-                        print(f"DEBUG: Successfully loaded reference image for editing: {reference_image_url}")
+                        print(f"DEBUG: Successfully loaded reference image for visual guidance: {reference_image_url}")
                     else:
                         print(f"Warning: Failed to fetch reference image (status {image_response.status_code}): {reference_image_url}")
                         # Fall back to text-only generation

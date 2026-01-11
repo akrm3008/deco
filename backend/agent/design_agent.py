@@ -429,7 +429,15 @@ OUTPUT (one line only):"""
 
         for i in range(num_images):
             # Create variation prompt
-            variation_prompt = f"{design_description[:200]} - variation {i+1}"
+            # When using reference image, keep prompt MINIMAL - let the image guide
+            if reference_image_url:
+                # Extract just the room type and basic request
+                room = self.storage.get_room(room_id) if room_id else None
+                room_type = room.room_type.value.replace('_', ' ') if room else "room"
+                variation_prompt = f"Interior design for {room_type} inspired by reference image - variation {i+1}"
+            else:
+                # No reference - use full description for text-to-image
+                variation_prompt = f"{design_description[:200]} - variation {i+1}"
 
             # Generate image (with reference if available for editing)
             image_url = await self.image_gen.generate(
